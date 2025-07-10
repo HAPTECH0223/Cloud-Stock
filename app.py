@@ -17,28 +17,63 @@ class CloudStockfishEngine:
         self.start_engine()
         
     def find_stockfish(self):
-        """Find Stockfish binary - prioritize local copy"""
+        """Find or download Stockfish binary"""
         # Check for local binary first
-        local_paths = ["./stockfish", "stockfish"]
+        local_paths = ["./stockfish", "stockfish", "./stockfish-ubuntu-x86-64-avx2", "stockfish-ubuntu-x86-64-avx2"]
         
         for path in local_paths:
             if os.path.exists(path):
                 try:
-                    # Make sure it's executable
                     os.chmod(path, 0o755)
                     print(f"✅ Found local Stockfish: {path}")
                     return path
                 except:
                     continue
         
-        # Fallback to system installation
+        # Try system installation
         system_paths = ["/usr/bin/stockfish", "/usr/local/bin/stockfish"]
         for path in system_paths:
             if os.path.exists(path):
                 print(f"✅ Found system Stockfish: {path}")
                 return path
         
-        raise Exception("❌ Stockfish binary not found! Make sure to include 'stockfish' file in your repository.")
+        # Download if not found
+        return self.download_stockfish()
+    
+    def download_stockfish(self):
+        """Download Stockfish binary at runtime"""
+        import urllib.request
+        import tarfile
+        
+        try:
+            print("📥 Downloading Stockfish...")
+            
+            # Download URL for Stockfish 17
+            url = "https://github.com/official-stockfish/Stockfish/releases/download/sf_17/stockfish-ubuntu-x86-64-avx2.tar"
+            
+            # Download
+            urllib.request.urlretrieve(url, "stockfish.tar")
+            print("📦 Extracting...")
+            
+            # Extract
+            with tarfile.open("stockfish.tar", "r") as tar:
+                tar.extractall()
+            
+            # Find extracted binary
+            import glob
+            stockfish_files = glob.glob("**/stockfish", recursive=True)
+            
+            if stockfish_files:
+                stockfish_path = stockfish_files[0]
+                os.chmod(stockfish_path, 0o755)
+                print(f"✅ Downloaded Stockfish: {stockfish_path}")
+                return stockfish_path
+            else:
+                raise Exception("Could not find extracted Stockfish binary")
+                
+        except Exception as e:
+            print(f"❌ Download failed: {e}")
+            raise Exception(f"Could not obtain Stockfish: {e}")
         
     def start_engine(self):
         try:
@@ -60,6 +95,15 @@ class CloudStockfishEngine:
             # Initialize engine
             self.send_command("uci")
             self.wait_for("uciok", timeout=10)
+            
+            # Optimize for speed - only best move, no analysis
+            self.send_command("setoption name MultiPV value 1")           # Only 1 best line
+            self.send_command("setoption name Ponder value false")        # No pondering
+            self.send_command("setoption name OwnBook value false")       # No opening book
+            self.send_command("setoption name UCI_AnalyseMode value false") # Fast mode
+            self.send_command("setoption name UCI_ShowCurrLine value false") # No current line
+            self.send_command("setoption name UCI_ShowRefutations value false") # No refutations
+            
             self.send_command("isready")
             self.wait_for("readyok", timeout=10)
             
@@ -130,14 +174,14 @@ class CloudStockfishEngine:
             # Set position
             self.send_command(f"position fen {fen}")
             
-            # Start search
+            # Start search with speed optimizations
             if time_limit:
                 search_cmd = f"go movetime {min(time_limit * 1000, 25000)}"
                 timeout = time_limit + 8
             else:
-                depth = min(max(depth, 5), 30)  # Clamp 5-30
+                depth = min(max(depth, 5), 25)  # Clamp 5-25 for speed
                 search_cmd = f"go depth {depth}"
-                timeout = max(depth * 2, 30)
+                timeout = max(depth * 1.5, 20)  # Faster timeout since we're optimized
             
             print(f"🚀 Search: {search_cmd}")
             self.send_command(search_cmd)
